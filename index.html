@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ExpressLRS Layout File Search</title>
+    <style>
+        body {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            font-family: 'Arial', sans-serif;
+            background-color: #f4f4f9;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            background-color: #fff;
+            margin: 10px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+            border-radius: 8px;
+            transition: width 0.5s;
+        }
+        .clear-button-container {
+            text-align: center;
+            margin-top: 20px;
+            width: 100%;
+        }
+        .clear-button-container button {
+            background-color: orangered;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            font-size: 1em;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        .clear-button-container button:hover {
+            background-color: darkred;
+        }
+        h1 {
+            font-size: 1.5em;
+            color: #333;
+        }
+        label {
+            font-weight: bold;
+            color: #555;
+        }
+        select, p, input {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+        #resultsList {
+            list-style-type: none;
+            padding: 0;
+        }
+        #resultsList li, #layoutFileResult {
+            cursor: pointer;
+            padding: 10px;
+            border-bottom: 1px solid #ddd;
+        }
+        #resultsList li:hover, #layoutFileResult:hover {
+            background-color: #e9e9e9;
+            color: #007BFF;
+            text-decoration: underline;
+        }
+        @media (min-width: 768px) {
+            .container {
+                width: 46%;
+            }
+            .clear-button-container {
+                width: auto;
+            }
+        }
+        @media (max-width: 767px) {
+            .container {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Search by Name</h1>
+        <label for="searchBox">Search Manufacturer/Product by Name:</label>
+        <input type="text" id="searchBox" oninput="fuzzySearch();" placeholder="Type Manufacturer or Product name to search">
+
+        <br><br>
+
+        <h1>Search by Layout File</h1>
+        <label for="moduleTypeSelect">Select Module Type:</label>
+        <select id="moduleTypeSelect" onchange="updateLayoutFiles(); updateUrlParams();">
+            <option value="" selected>Select Unit Type and Band</option>
+            <!-- Options will be populated dynamically -->
+        </select>
+
+        <br><br>
+
+        <label for="layoutFileSelect">Select Layout File:</label>
+        <select id="layoutFileSelect" onchange="updateProducts(); updateUrlParams();">
+            <option value="" selected>Select Layout File</option>
+            <!-- Options will be populated dynamically -->
+        </select>
+
+        <h2>Results:</h2>
+        <ul id="resultsList">
+            <!-- Results will be populated dynamically -->
+        </ul>
+    </div>
+
+    <div class="container">
+        <h1>Search by Manufacturer/Product</h1>
+        <label for="revModuleTypeSelect">Select Module Type:</label>
+        <select id="revModuleTypeSelect" onchange="updateManufacturers(); updateUrlParams();">
+            <option value="" selected>Select Unit Type and Band</option>
+            <!-- Options will be populated dynamically -->
+        </select>
+
+        <br><br>
+
+        <label for="manufacturerSelect">Select Manufacturer:</label>
+        <select id="manufacturerSelect" onchange="updateProductsByManufacturer(); updateUrlParams();">
+            <option value="" selected>Select Manufacturer</option>
+            <!-- Options will be populated dynamically -->
+        </select>
+
+        <br><br>
+
+        <label for="productSelect">Select Product:</label>
+        <select id="productSelect" onchange="displayLayoutFile(); updateUrlParams();">
+            <option value="" selected>Select Product</option>
+            <!-- Options will be populated dynamically -->
+        </select>
+		
+		<h2>Firmware:</h2>
+        <pre id="firmwareResult">
+            <!-- Firmware content will be displayed here -->
+        </pre>
+
+        <h2>Layout File:</h2>
+        <p id="layoutFileResult" onclick="loadLayoutFileIntoLeftPane(this.textContent); updateUrlParams();">
+            <!-- Layout file will be displayed here -->
+        </p>
+
+        <h2>Layout JSON:</h2>
+        <pre id="layoutJsonResult">
+            <!-- Layout JSON content will be displayed here -->
+        </pre>
+
+        <h2>Overlay:</h2>
+        <pre id="overlayResult">
+            <!-- Overlay content will be displayed here -->
+        </pre>
+    </div>
+
+    <div class="clear-button-container">
+        <button style="font-size: small;" onclick="clearAllSelections();">Clear All</button>
+    </div>
+
+
+    <script>
+        const debug = true; // Set this to false to disable debugging messages
+
+        function logDebug(message, ...optionalParams) {
+            if (debug) {
+                console.log(message, ...optionalParams);
+            }
+        }
+
+        let productMapping = {};
+        let moduleTypeMapping = {};
+        let manufacturerMapping = {};
+        let productNameMapping = {};
+        let overlayMapping = {};
+		let firmwareMapping = {};
+
+        function getUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                moduleType: params.get('moduleType') || '',
+                layoutFile: params.get('layoutFile') || '',
+                revModuleType: params.get('revModuleType') || '',
+                manufacturer: params.get('manufacturer') || '',
+                product: params.get('product') || ''
+            };
+        }
+
+        function fuzzySearch() {
+            const searchBox = document.getElementById('searchBox');
+            const searchTerm = searchBox.value.toLowerCase();
+            const resultsList = document.getElementById('resultsList');
+            resultsList.innerHTML = '';
+
+            if (!searchTerm) {
+                return;
+            }
+
+            const results = [];
+
+            for (const manufacturer in productNameMapping) {
+                for (const moduleType in productNameMapping[manufacturer]) {
+                    for (const product in productNameMapping[manufacturer][moduleType]) {
+                        if (fuzzyMatch(product.toLowerCase(), searchTerm)) {
+                            results.push(`${manufacturer} / ${product}`);
+                        }
+                    }
+                }
+            }
+
+            if (results.length === 0) {
+                resultsList.innerHTML = '<li>No results found</li>';
+            } else {
+                results.forEach(result => {
+                    const li = document.createElement('li');
+                    li.textContent = result;
+                    li.onclick = () => loadProductIntoRightPane(result);
+                    resultsList.appendChild(li);
+                });
+            }
+        }
+
+        function fuzzyMatch(str, pattern) {
+            const patternLen = pattern.length;
+            const strLen = str.length;
+            if (patternLen > strLen) {
+                return false;
+            }
+            if (patternLen === 0) {
+                return true;
+            }
+
+            let patternIdx = 0;
+            let strIdx = 0;
+
+            while (strIdx < strLen) {
+                if (str[strIdx] === pattern[patternIdx]) {
+                    patternIdx++;
+                }
+                if (patternIdx === patternLen) {
+                    return true;
+                }
+                strIdx++;
+            }
+            return false;
+        }
+
+        function updateUrlParams() {
+            const params = new URLSearchParams();
+            const moduleTypeSelect = document.getElementById('moduleTypeSelect');
+            const layoutFileSelect = document.getElementById('layoutFileSelect');
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const productSelect = document.getElementById('productSelect');
+
+            if (moduleTypeSelect.value) {
+                params.set('moduleType', moduleTypeSelect.value);
+            }
+            if (layoutFileSelect.value) {
+                params.set('layoutFile', layoutFileSelect.value);
+            }
+            if (revModuleTypeSelect.value) {
+                params.set('revModuleType', revModuleTypeSelect.value);
+            }
+            if (manufacturerSelect.value) {
+                params.set('manufacturer', manufacturerSelect.value);
+            }
+            if (productSelect.value) {
+                params.set('product', productSelect.value);
+            }
+
+            const newUrl = `${window.location.pathname}?${params.toString()}`;
+            window.history.replaceState({}, '', newUrl);
+        }
+
+        async function fetchJsonData() {
+            try {
+                logDebug('Fetching JSON data...');
+                const response = await fetch('https://raw.githubusercontent.com/ExpressLRS/targets/master/targets.json');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok ' + response.statusText);
+                }
+                const jsonData = await response.json();
+                logDebug('JSON data fetched successfully:', jsonData);
+                processJsonData(jsonData);
+            } catch (error) {
+                console.error('Error fetching JSON data:', error);
+            }
+        }
+
+        function processJsonData(jsonData) {
+            const moduleTypes = new Set();
+
+            for (const manufacturer in jsonData) {
+                const manufacturerName = jsonData[manufacturer].name;
+                for (const moduleType in jsonData[manufacturer]) {
+                    if (moduleType !== 'name') {
+                        moduleTypes.add(moduleType);
+
+                        if (!moduleTypeMapping[moduleType]) {
+                            moduleTypeMapping[moduleType] = new Set();
+                        }
+                        if (!manufacturerMapping[moduleType]) {
+                            manufacturerMapping[moduleType] = new Set();
+                        }
+
+                        for (const product in jsonData[manufacturer][moduleType]) {
+                            const productName = jsonData[manufacturer][moduleType][product].product_name;
+                            const layoutFile = jsonData[manufacturer][moduleType][product].layout_file;
+                            const overlay = jsonData[manufacturer][moduleType][product].overlay;
+							const firmware = jsonData[manufacturer][moduleType][product].firmware;
+
+                            logDebug(`Processing product: ${productName}, layoutFile: ${layoutFile}, moduleType: ${moduleType}`);
+
+                            moduleTypeMapping[moduleType].add(layoutFile);
+                            manufacturerMapping[moduleType].add(manufacturerName);
+
+                            if (!productMapping[layoutFile]) {
+                                productMapping[layoutFile] = [];
+                            }
+                            productMapping[layoutFile].push(`${manufacturerName} / ${productName}`);
+
+                            if (!productNameMapping[manufacturerName]) {
+                                productNameMapping[manufacturerName] = {};
+                            }
+                            if (!productNameMapping[manufacturerName][moduleType]) {
+                                productNameMapping[manufacturerName][moduleType] = {};
+                            }
+                            productNameMapping[manufacturerName][moduleType][productName] = layoutFile;
+
+                            if (overlay) {
+                                if (!overlayMapping[manufacturerName]) {
+                                    overlayMapping[manufacturerName] = {};
+                                }
+                                if (!overlayMapping[manufacturerName][moduleType]) {
+                                    overlayMapping[manufacturerName][moduleType] = {};
+                                }
+                                overlayMapping[manufacturerName][moduleType][productName] = overlay;
+                            }
+							
+                            if (firmware) {
+                                if (!firmwareMapping[manufacturerName]) {
+                                    firmwareMapping[manufacturerName] = {};
+                                }
+                                if (!firmwareMapping[manufacturerName][moduleType]) {
+                                    firmwareMapping[manufacturerName][moduleType] = {};
+                                }
+                                firmwareMapping[manufacturerName][moduleType][productName] = firmware;
+							}			
+                        }
+                    }
+                }
+            }
+
+            logDebug('Module types extracted:', Array.from(moduleTypes));
+            logDebug('Module type mapping created:', moduleTypeMapping);
+            logDebug('Product mapping created:', productMapping);
+            logDebug('Manufacturer mapping created:', manufacturerMapping);
+            logDebug('Product name mapping created:', productNameMapping);
+            logDebug('Overlay mapping created:', overlayMapping);
+            logDebug('Firmware mapping created:', firmwareMapping);
+
+            populateModuleTypeDropdown(Array.from(moduleTypes).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+            populateRevModuleTypeDropdown(Array.from(moduleTypes).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())));
+
+            applyUrlParams();
+        }
+
+        function populateModuleTypeDropdown(moduleTypes) {
+            const moduleTypeSelect = document.getElementById('moduleTypeSelect');
+            moduleTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                moduleTypeSelect.appendChild(option);
+            });
+            logDebug('Module type dropdown populated');
+        }
+
+        function updateLayoutFiles() {
+            const moduleTypeSelect = document.getElementById('moduleTypeSelect');
+            const layoutFileSelect = document.getElementById('layoutFileSelect');
+            const selectedModuleType = moduleTypeSelect.value;
+
+            layoutFileSelect.innerHTML = '<option value="" selected>Select Layout File</option>';
+
+            if (selectedModuleType === '') {
+                const resultsList = document.getElementById('resultsList');
+                resultsList.innerHTML = '';
+                return;
+            }
+
+            const layoutFiles = Array.from(moduleTypeMapping[selectedModuleType] || new Set()).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+            layoutFiles.forEach(file => {
+                const option = document.createElement('option');
+                option.value = file;
+                option.textContent = file;
+                layoutFileSelect.appendChild(option);
+            });
+            logDebug(`Layout file dropdown updated for module type: ${selectedModuleType}`);
+
+            const resultsList = document.getElementById('resultsList');
+            resultsList.innerHTML = '';
+        }
+
+        function updateProducts() {
+            const layoutFileSelect = document.getElementById('layoutFileSelect');
+            const resultsList = document.getElementById('resultsList');
+            const selectedFile = layoutFileSelect.value;
+            const products = (productMapping[selectedFile] || []).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+            resultsList.innerHTML = '';
+            products.forEach(product => {
+                const li = document.createElement('li');
+                li.textContent = product;
+                li.onclick = () => { loadProductIntoRightPane(product); updateUrlParams(); };
+                resultsList.appendChild(li);
+            });
+            logDebug(`Products updated for layout file: ${selectedFile}`);
+        }
+
+        function populateRevModuleTypeDropdown(moduleTypes) {
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            moduleTypes.forEach(type => {
+                const option = document.createElement('option');
+                option.value = type;
+                option.textContent = type;
+                revModuleTypeSelect.appendChild(option);
+            });
+            logDebug('Reverse module type dropdown populated');
+        }
+
+        function updateManufacturers() {
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const selectedModuleType = revModuleTypeSelect.value;
+            const previouslySelectedManufacturer = manufacturerSelect.value;
+
+            manufacturerSelect.innerHTML = '<option value="" selected>Select Manufacturer</option>';
+
+            if (selectedModuleType === '') {
+                const productSelect = document.getElementById('productSelect');
+                const layoutFileResult = document.getElementById('layoutFileResult');
+                productSelect.innerHTML = '<option value="" selected>Select Product</option>';
+                layoutFileResult.textContent = '';
+                return;
+            }
+
+            const manufacturers = Array.from(manufacturerMapping[selectedModuleType] || new Set()).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+            manufacturers.forEach(manufacturer => {
+                const option = document.createElement('option');
+                option.value = manufacturer;
+                option.textContent = manufacturer;
+                manufacturerSelect.appendChild(option);
+            });
+            logDebug(`Manufacturer dropdown updated for module type: ${selectedModuleType}`);
+
+            const productSelect = document.getElementById('productSelect');
+            const layoutFileResult = document.getElementById('layoutFileResult');
+            productSelect.innerHTML = '<option value="" selected>Select Product</option>';
+            layoutFileResult.textContent = '';
+
+            if (manufacturers.includes(previouslySelectedManufacturer)) {
+                manufacturerSelect.value = previouslySelectedManufacturer;
+                updateProductsByManufacturer();
+            }
+        }
+
+        function updateProductsByManufacturer() {
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const productSelect = document.getElementById('productSelect');
+            const selectedModuleType = revModuleTypeSelect.value;
+            const selectedManufacturer = manufacturerSelect.value;
+
+            productSelect.innerHTML = '<option value="" selected>Select Product</option>';
+
+            if (selectedManufacturer === '') {
+                const layoutFileResult = document.getElementById('layoutFileResult');
+                layoutFileResult.textContent = '';
+                return;
+            }
+
+            const products = Object.keys(productNameMapping[selectedManufacturer]?.[selectedModuleType] || {}).sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+
+            products.forEach(product => {
+                const option = document.createElement('option');
+                option.value = product;
+                option.textContent = product;
+                productSelect.appendChild(option);
+            });
+            logDebug(`Product dropdown updated for manufacturer: ${selectedManufacturer}`);
+
+            const layoutFileResult = document.getElementById('layoutFileResult');
+            layoutFileResult.textContent = '';
+        }
+
+        function customStringifyReplacer(key, value) {
+            if (Array.isArray(value)) {
+                return JSON.stringify(value);
+            }
+            return value;
+        }
+
+        const customStringify = (obj, space) => {
+            const jsonString = JSON.stringify(obj, customStringifyReplacer, space);
+            return jsonString.replace(/"\[(.*?)\]"/g, '[$1]');
+        };
+
+        async function displayLayoutFile() {
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const productSelect = document.getElementById('productSelect');
+            const layoutFileResult = document.getElementById('layoutFileResult');
+            const layoutJsonResult = document.getElementById('layoutJsonResult');
+            const overlayResult = document.getElementById('overlayResult');
+			const firmwareResult = document.getElementById('firmwareResult');
+            const selectedModuleType = revModuleTypeSelect.value;
+            const selectedManufacturer = manufacturerSelect.value;
+            const selectedProduct = productSelect.value;
+
+            if (selectedProduct === '') {
+                layoutFileResult.textContent = '';
+                layoutJsonResult.textContent = '';
+                overlayResult.textContent = '';
+				firmwareResult.textContent = '';
+                return;
+            }
+
+            const layoutFile = productNameMapping[selectedManufacturer]?.[selectedModuleType]?.[selectedProduct];
+            layoutFileResult.textContent = layoutFile;
+            layoutFileResult.onclick = () => { loadLayoutFileIntoLeftPane(layoutFile); updateUrlParams(); };
+            logDebug(`Layout file displayed for product: ${selectedProduct}`);
+
+            const overlay = overlayMapping[selectedManufacturer]?.[selectedModuleType]?.[selectedProduct];
+			overlayResult.textContent = overlay ? customStringify(overlay, 2) : 'No overlay';
+            logDebug(`Overlay displayed for product: ${selectedProduct}`);
+			
+			const firmware = firmwareMapping[selectedManufacturer]?.[selectedModuleType]?.[selectedProduct];
+			firmwareResult.textContent = firmware ? customStringify(firmware, 2) : 'No firmware';
+			logDebug(`Firmware displayed for product: ${selectedProduct}`);
+
+            const txOrRx = selectedModuleType.startsWith('tx') ? 'TX' : 'RX';
+            const layoutJsonUrl = `https://raw.githubusercontent.com/ExpressLRS/targets/master/${txOrRx}/${layoutFile}`;
+            try {
+                const response = await fetch(layoutJsonUrl);
+                if (!response.ok) {
+                    throw new Error('Network response was not ok ' + response.statusText);
+                }
+                const layoutJson = await response.json();
+                layoutJsonResult.textContent = customStringify(layoutJson, 2);
+                logDebug(`Layout JSON fetched and displayed for product: ${selectedProduct}`);
+            } catch (error) {
+                console.error('Error fetching layout JSON:', error);
+                layoutJsonResult.textContent = 'Error fetching layout JSON';
+            }
+        }
+
+        function loadProductIntoRightPane(product) {
+            const [manufacturerName, productName] = product.split(' / ');
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const productSelect = document.getElementById('productSelect');
+
+            let selectedModuleType;
+            for (const moduleType in productNameMapping[manufacturerName]) {
+                if (productNameMapping[manufacturerName][moduleType][productName]) {
+                    selectedModuleType = moduleType;
+                    break;
+                }
+            }
+
+            revModuleTypeSelect.value = selectedModuleType;
+            updateManufacturers();
+            manufacturerSelect.value = manufacturerName;
+            updateProductsByManufacturer();
+            productSelect.value = productName;
+            displayLayoutFile();
+            updateUrlParams();
+        }
+
+        function loadLayoutFileIntoLeftPane(layoutFile) {
+            const moduleTypeSelect = document.getElementById('moduleTypeSelect');
+            const layoutFileSelect = document.getElementById('layoutFileSelect');
+
+            let selectedModuleType;
+            for (const moduleType in moduleTypeMapping) {
+                if (moduleTypeMapping[moduleType].has(layoutFile)) {
+                    selectedModuleType = moduleType;
+                    break;
+                }
+            }
+
+            moduleTypeSelect.value = selectedModuleType;
+            updateLayoutFiles();
+            layoutFileSelect.value = layoutFile;
+            updateProducts();
+            updateUrlParams();
+        }
+
+        function applyUrlParams() {
+            const params = getUrlParams();
+            const moduleTypeSelect = document.getElementById('moduleTypeSelect');
+            const layoutFileSelect = document.getElementById('layoutFileSelect');
+            const revModuleTypeSelect = document.getElementById('revModuleTypeSelect');
+            const manufacturerSelect = document.getElementById('manufacturerSelect');
+            const productSelect = document.getElementById('productSelect');
+
+            if (params.moduleType) {
+                moduleTypeSelect.value = params.moduleType;
+                updateLayoutFiles();
+                if (params.layoutFile) {
+                    layoutFileSelect.value = params.layoutFile;
+                    updateProducts();
+                }
+            }
+
+            if (params.revModuleType) {
+                revModuleTypeSelect.value = params.revModuleType;
+                updateManufacturers();
+                if (params.manufacturer) {
+                    manufacturerSelect.value = params.manufacturer;
+                    updateProductsByManufacturer();
+                    if (params.product) {
+                        productSelect.value = params.product;
+                        displayLayoutFile();
+                    }
+                }
+            }
+        }
+
+        function clearAllSelections() {
+            document.getElementById('searchBox').value = '';
+            document.getElementById('moduleTypeSelect').selectedIndex = 0;
+            document.getElementById('layoutFileSelect').selectedIndex = 0;
+            document.getElementById('revModuleTypeSelect').selectedIndex = 0;
+            document.getElementById('manufacturerSelect').selectedIndex = 0;
+            document.getElementById('productSelect').selectedIndex = 0;
+            document.getElementById('resultsList').innerHTML = '';
+            document.getElementById('layoutFileResult').textContent = '';
+            document.getElementById('layoutJsonResult').textContent = '';
+            document.getElementById('overlayResult').textContent = '';
+			document.getElementById('firmwareResult').textContent = '';
+            updateUrlParams();
+        }
+
+        window.onload = fetchJsonData;
+    </script>
+</body>
+</html>
